@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(llmgate VERSION 0.1.0 LANGUAGES CXX)
 
+# Silences the harmless "DOWNLOAD_EXTRACT_TIMESTAMP" warning on newer CMake
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -28,7 +33,10 @@ FetchContent_MakeAvailable(httplib json googletest)
 find_package(Threads REQUIRED)
 
 # ---- Core library: portable code shared by the server and the tests ----
-add_library(llmgate_core src/health.cpp)
+add_library(llmgate_core
+  src/health.cpp
+  src/limiter/token_bucket.cpp
+)
 target_include_directories(llmgate_core PUBLIC include)
 target_compile_options(llmgate_core PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(llmgate_core PUBLIC nlohmann_json::nlohmann_json)
@@ -40,7 +48,10 @@ target_link_libraries(llmgate PRIVATE llmgate_core httplib::httplib Threads::Thr
 
 # ---- Tests ----
 enable_testing()
-add_executable(llmgate_tests tests/test_health.cpp)
-target_link_libraries(llmgate_tests PRIVATE llmgate_core GTest::gtest_main)
+add_executable(llmgate_tests
+  tests/test_health.cpp
+  tests/test_token_bucket.cpp
+)
+target_link_libraries(llmgate_tests PRIVATE llmgate_core GTest::gtest_main Threads::Threads)
 include(GoogleTest)
 gtest_discover_tests(llmgate_tests)
