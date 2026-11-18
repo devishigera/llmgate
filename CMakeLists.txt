@@ -36,6 +36,7 @@ find_package(Threads REQUIRED)
 add_library(llmgate_core
   src/health.cpp
   src/limiter/token_bucket.cpp
+  src/config/config.cpp
 )
 target_include_directories(llmgate_core PUBLIC include)
 target_compile_options(llmgate_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -52,7 +53,9 @@ add_executable(llmgate_tests
   tests/test_health.cpp
   tests/test_token_bucket.cpp
   tests/test_lru_cache.cpp
+  tests/test_config.cpp
 )
+target_compile_definitions(llmgate_tests PRIVATE LLMGATE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(llmgate_tests PRIVATE llmgate_core GTest::gtest_main Threads::Threads)
 include(GoogleTest)
 gtest_discover_tests(llmgate_tests)
