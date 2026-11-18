@@ -51,6 +51,7 @@ enable_testing()
 add_executable(llmgate_tests
   tests/test_health.cpp
   tests/test_token_bucket.cpp
+  tests/test_lru_cache.cpp
 )
 target_link_libraries(llmgate_tests PRIVATE llmgate_core GTest::gtest_main Threads::Threads)
 include(GoogleTest)
