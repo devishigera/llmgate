@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(llmgate VERSION 0.1.0 LANGUAGES CXX)
 
-# Silences the harmless "DOWNLOAD_EXTRACT_TIMESTAMP" warning on newer CMake
 if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
@@ -15,47 +14,42 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
-# ---- Dependencies (downloaded automatically, nothing to install by hand) ----
 include(FetchContent)
-
-FetchContent_Declare(httplib
-  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG v0.18.3)
-FetchContent_Declare(json
-  URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
-FetchContent_Declare(googletest
-  URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz)
-
+FetchContent_Declare(httplib GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git GIT_TAG v0.18.3)
+FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz)
+FetchContent_Declare(googletest URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.tar.gz)
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(httplib json googletest)
 
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
-# ---- Core library: portable code shared by the server and the tests ----
 add_library(llmgate_core
   src/health.cpp
   src/limiter/token_bucket.cpp
   src/config/config.cpp
+  src/util/sha256.cpp
+  src/auth/key_store.cpp
 )
 target_include_directories(llmgate_core PUBLIC include)
 target_compile_options(llmgate_core PRIVATE -Wall -Wextra -Wpedantic)
-target_link_libraries(llmgate_core PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(llmgate_core PUBLIC nlohmann_json::nlohmann_json OpenSSL::Crypto)
 
-# ---- The server executable ----
 add_executable(llmgate src/main.cpp)
 target_compile_options(llmgate PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(llmgate PRIVATE llmgate_core httplib::httplib Threads::Threads)
 
-# ---- Tests ----
 enable_testing()
 add_executable(llmgate_tests
   tests/test_health.cpp
   tests/test_token_bucket.cpp
   tests/test_lru_cache.cpp
   tests/test_config.cpp
+  tests/test_auth.cpp
 )
 target_compile_definitions(llmgate_tests PRIVATE LLMGATE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(llmgate_tests PRIVATE llmgate_core GTest::gtest_main Threads::Threads)
+
 include(GoogleTest)
 gtest_discover_tests(llmgate_tests)
