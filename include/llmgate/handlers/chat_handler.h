@@ -1,0 +1,45 @@
+#pragma once
+
+#include <chrono>
+
+#include "llmgate/auth/key_store.h"
+#include "llmgate/cache/lru_cache.h"
+#include "llmgate/limiter/token_bucket.h"
+#include "llmgate/provider/provider.h"
+#include "llmgate/resilience/circuit_breaker.h"
+#include "llmgate/server/http_types.h"
+
+namespace llmgate {
+
+using ChatCache = LruCache<std::string, ChatResponse>;
+
+// Handles POST /v1/chat. Every request goes through the same pipeline:
+//
+//   1. authenticate the API key            -> 401 unauthorized
+//   2. parse and validate the JSON body    -> 400 bad_request
+//   3. rate limit this key                 -> 429 rate_limited (+ retry-after)
+//   4. look in the cache                   -> 200 (cached: true)
+//   5. ask the circuit breaker             -> 502 provider_unavailable
+//   6. call the provider with a timeout    -> 200 (cached: false)
+//                                             502 provider_error / 504 provider_timeout
+//
+// The handler only uses references, so whoever creates it (main, or a test)
+// owns the dependencies and must keep them alive as long as the handler.
+class ChatHandler {
+public:
+    ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
+                Provider& provider, CircuitBreaker& breaker,
+                std::chrono::milliseconds provider_timeout);
+
+    HttpResponse handle(const HttpRequest& request);
+
+private:
+    const KeyStore& keys_;
+    RateLimiter& limiter_;
+    ChatCache& cache_;
+    Provider& provider_;
+    CircuitBreaker& breaker_;
+    std::chrono::milliseconds provider_timeout_;
+};
+
+}  // namespace llmgate

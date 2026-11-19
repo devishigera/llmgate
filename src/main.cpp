@@ -4,8 +4,9 @@
 #include <iostream>
 #include <string>
 
+#include "llmgate/app/app.h"
 #include "llmgate/config/config.h"
-#include "llmgate/health.h"
+#include "llmgate/server/httplib_adapter.h"
 
 namespace {
 
@@ -51,6 +52,8 @@ int main(int argc, char** argv) {
             std::cerr << e.what() << "\n";
             return 1;
         }
+    } else {
+        std::cerr << "note: no --config given, only /health will work\n";
     }
 
     // 3. LLMGATE_PORT overrides the port from the file
@@ -65,11 +68,12 @@ int main(int argc, char** argv) {
 
     std::cout << llmgate::describe(config);
 
-    // 4. Start the server
+    // 4. Build the gateway and connect it to the HTTP server
+    llmgate::App app(config);
+    for (const auto& note : app.notes()) std::cout << "startup: " << note << "\n";
+
     httplib::Server server;
-    server.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-        res.set_content(llmgate::health_json(), "application/json");
-    });
+    llmgate::install_router(server, app.router(), config.max_body_bytes);
 
     std::cout << "LLMGate listening on " << config.listen_host << ":"
               << config.listen_port << std::endl;
