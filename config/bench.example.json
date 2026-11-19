@@ -1,0 +1,17 @@
+{
+  "listen": "0.0.0.0:8080",
+  "max_body_bytes": 1048576,
+  "cache": { "capacity": 10000, "ttl_seconds": 600 },
+  "providers": [
+    { "name": "mock", "type": "mock", "priority": 1 }
+  ],
+  "circuit_breaker": { "failure_threshold": 5, "cool_down_seconds": 20 },
+  "keys": [
+    {
+      "team": "bench-team",
+      "key_sha256": "456acec14fd9a742e5306de8bc0aaaeaf57d506f7d0bf46b44326cfbbe6fcea0",
+      "rate_limit": { "burst": 1000000, "per_second": 1000000 },
+      "daily_token_budget": 1000000000
+    }
+  ]
+}
