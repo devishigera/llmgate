@@ -15,7 +15,8 @@ namespace llmgate {
 inline void install_router(httplib::Server& server, const Router& router,
                            std::size_t max_body_bytes) {
     server.set_payload_max_length(max_body_bytes);
-
+    server.set_payload_max_length(max_body_bytes);
+    server.set_tcp_nodelay(true);
     auto handle = [&router](const httplib::Request& req, httplib::Response& res) {
         HttpRequest request;
         request.method = req.method;
