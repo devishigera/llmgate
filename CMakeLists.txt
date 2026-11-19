@@ -35,6 +35,7 @@ add_library(llmgate_core
   src/resilience/circuit_breaker.cpp
   src/server/http_types.cpp
   src/server/router.cpp
+  src/handlers/chat_handler.cpp
 )
 target_include_directories(llmgate_core PUBLIC include)
 target_compile_options(llmgate_core PRIVATE -Wall -Wextra -Wpedantic)
@@ -54,6 +55,7 @@ add_executable(llmgate_tests
   tests/test_mock_provider.cpp
   tests/test_circuit_breaker.cpp
   tests/test_router.cpp
+  tests/test_chat_handler.cpp
 )
 target_compile_definitions(llmgate_tests PRIVATE LLMGATE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(llmgate_tests PRIVATE llmgate_core GTest::gtest_main Threads::Threads)
