@@ -37,10 +37,12 @@ add_library(llmgate_core
   src/server/router.cpp
   src/handlers/chat_handler.cpp
   src/app/app.cpp
+  src/provider/ollama.cpp
 )
 target_include_directories(llmgate_core PUBLIC include)
 target_compile_options(llmgate_core PRIVATE -Wall -Wextra -Wpedantic)
 target_link_libraries(llmgate_core PUBLIC nlohmann_json::nlohmann_json OpenSSL::Crypto)
+target_link_libraries(llmgate_core PRIVATE httplib::httplib Threads::Threads)
 
 add_executable(llmgate src/main.cpp)
 target_compile_options(llmgate PRIVATE -Wall -Wextra -Wpedantic)
@@ -59,6 +61,7 @@ add_executable(llmgate_tests
   tests/test_chat_handler.cpp
   tests/test_app.cpp
   tests/test_integration.cpp
+  tests/test_ollama_provider.cpp
 )
 target_compile_definitions(llmgate_tests PRIVATE LLMGATE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(llmgate_tests PRIVATE llmgate_core httplib::httplib GTest::gtest_main Threads::Threads)
