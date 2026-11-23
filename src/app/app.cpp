@@ -5,34 +5,39 @@
 
 #include "llmgate/health.h"
 #include "llmgate/provider/mock.h"
+#include "llmgate/provider/ollama.h"
 
 namespace llmgate {
 
 namespace {
 
-// Picks the provider with the lowest priority number that we can actually
-// run. Only "mock" exists for now; real providers arrive in Phase 2.
-// Returns nullptr if none is usable.
+// Picks the provider with the lowest priority number. Types: "mock" and
+// "ollama". Returns nullptr if the config has no providers.
 std::unique_ptr<Provider> pick_provider(const Config& config, std::chrono::milliseconds& timeout,
                                         std::vector<std::string>& notes) {
-    std::vector<const ProviderConfig*> ordered;
-    for (const auto& p : config.providers) ordered.push_back(&p);
-    std::stable_sort(ordered.begin(), ordered.end(),
-                     [](const ProviderConfig* a, const ProviderConfig* b) {
-                         return a->priority < b->priority;
-                     });
-
-    for (const ProviderConfig* p : ordered) {
-        if (p->type == "mock") {
-            MockOptions options;
-            options.name = p->name;
-            timeout = std::chrono::milliseconds(p->timeout_ms);
-            notes.push_back("using provider '" + p->name + "' (mock)");
-            return std::make_unique<MockProvider>(options);
-        }
-        notes.push_back("provider '" + p->name + "' (type " + p->type +
-                        ") is not available yet, skipping");
+    const ProviderConfig* best = nullptr;
+    for (const auto& p : config.providers) {
+        if (best == nullptr || p.priority < best->priority) best = &p;
     }
+    if (best == nullptr) return nullptr;
+
+    timeout = std::chrono::milliseconds(best->timeout_ms);
+    if (best->type == "ollama") {
+        OllamaOptions options;
+        options.name = best->name;
+        options.url = best->url;
+        notes.push_back("using provider '" + best->name + "' (ollama)");
+        return std::make_unique<OllamaProvider>(options);
+    }
+
+    if (best->type == "mock") {
+        MockOptions options;
+        options.name = best->name;
+        notes.push_back("using provider '" + best->name + "' (mock)");
+        return std::make_unique<MockProvider>(options);
+    }
+
+    notes.push_back("provider '" + best->name + "' has unknown type '" + best->type + "'");
     return nullptr;
 }
 

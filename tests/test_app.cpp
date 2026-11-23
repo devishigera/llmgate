@@ -67,11 +67,15 @@ TEST(App, ChatWorksWithMockProvider) {
     EXPECT_EQ(json::parse(r.body)["provider"], "mock");
 }
 
-TEST(App, SkipsProvidersItCannotRunYet) {
-    // ollama has the lower priority number but is not implemented yet.
+TEST(App, OllamaIsUsedWhenItHasTheLowestPriorityNumber) {
     App app(config_with({provider("ollama", "ollama", 1), provider("fallback", "mock", 2)}));
     ASSERT_TRUE(app.chat_enabled());
-    EXPECT_TRUE(has_note(app, "'ollama'"));
+    EXPECT_TRUE(has_note(app, "'ollama' (ollama)"));
+}
+
+TEST(App, MockIsUsedWhenItHasTheLowestPriorityNumber) {
+    App app(config_with({provider("ollama", "ollama", 2), provider("fallback", "mock", 1)}));
+    ASSERT_TRUE(app.chat_enabled());
     EXPECT_EQ(json::parse(app.router().dispatch(chat_request()).body)["provider"], "fallback");
 }
 
@@ -80,8 +84,8 @@ TEST(App, LowestPriorityNumberWins) {
     EXPECT_EQ(json::parse(app.router().dispatch(chat_request()).body)["provider"], "first");
 }
 
-TEST(App, NoUsableProviderDisablesChatButNotHealth) {
-    App app(config_with({provider("ollama", "ollama", 1)}));
+TEST(App, NoProvidersDisablesChatButNotHealth) {
+    App app(config_with({}));
     EXPECT_FALSE(app.chat_enabled());
     EXPECT_TRUE(has_note(app, "no usable provider"));
     EXPECT_EQ(app.router().dispatch(chat_request()).status, 404);
@@ -90,6 +94,12 @@ TEST(App, NoUsableProviderDisablesChatButNotHealth) {
     h.method = "GET";
     h.path = "/health";
     EXPECT_EQ(app.router().dispatch(h).status, 200);
+}
+
+TEST(App, UnknownProviderTypeDisablesChat) {
+    App app(config_with({provider("weird", "carrier-pigeon", 1)}));
+    EXPECT_FALSE(app.chat_enabled());
+    EXPECT_TRUE(has_note(app, "unknown type"));
 }
 
 TEST(App, NoKeysDisablesChat) {
