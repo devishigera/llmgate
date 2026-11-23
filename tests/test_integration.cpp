@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include "fake_ollama.h"
 #include "llmgate/app/app.h"
 #include "llmgate/server/httplib_adapter.h"
 #include "llmgate/util/sha256.h"
@@ -191,4 +192,84 @@ TEST(Integration, ManyClientsAtOnce) {
     }
     for (auto& th : threads) th.join();
     EXPECT_EQ(ok.load(), 200);
+}
+
+// ---- the whole gateway in front of a (fake) Ollama server -----------------------
+
+namespace {
+
+Config ollama_config(const FakeOllama& fake, int timeout_ms = 2000) {
+    Config c = test_config();
+    c.providers.clear();
+    ProviderConfig p;
+    p.name = "ollama";
+    p.type = "ollama";
+    p.url = fake.url();
+    p.timeout_ms = timeout_ms;
+    c.providers.push_back(p);
+    return c;
+}
+
+}  // namespace
+
+TEST(IntegrationOllama, AnswerComesFromOllama) {
+    FakeOllama fake;
+    TestServer server(ollama_config(fake));
+    auto res = server.chat();
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 200);
+    json j = json::parse(res->body);
+    EXPECT_EQ(j["content"], "hello from fake ollama");
+    EXPECT_EQ(j["provider"], "ollama");
+    EXPECT_EQ(j["usage"]["prompt_tokens"], 11);
+    EXPECT_EQ(j["usage"]["completion_tokens"], 7);
+}
+
+TEST(IntegrationOllama, RepeatedPromptNeverReachesOllamaTwice) {
+    FakeOllama fake;
+    TestServer server(ollama_config(fake));
+    server.chat();
+    EXPECT_EQ(json::parse(server.chat()->body)["cached"], true);
+    EXPECT_EQ(fake.calls(), 1);
+}
+
+TEST(IntegrationOllama, OllamaErrorBecomes502) {
+    FakeOllama fake;
+    fake.status = 500;
+    fake.reply_body = R"({"error":"secret internal detail"})";
+    TestServer server(ollama_config(fake));
+    auto res = server.chat();
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 502);
+    EXPECT_EQ(json::parse(res->body)["error"]["code"], "provider_error");
+    EXPECT_EQ(res->body.find("secret"), std::string::npos);  // details stay in logs
+}
+
+TEST(IntegrationOllama, SlowOllamaBecomes504) {
+    FakeOllama fake;
+    fake.delay_ms = 800;
+    TestServer server(ollama_config(fake, /*timeout_ms=*/100));
+    auto res = server.chat();
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 504);
+    EXPECT_EQ(json::parse(res->body)["error"]["code"], "provider_timeout");
+}
+
+TEST(IntegrationOllama, OllamaDownBecomes502ThenBreakerOpens) {
+    FakeOllama fake;
+    Config config = ollama_config(fake);
+    config.circuit_breaker.failure_threshold = 3;
+    TestServer server(config);
+    fake.stop();  // Ollama goes away
+
+    for (int i = 0; i < 3; ++i) {
+        auto res = server.chat(std::string(R"({"model":"m","messages":[{"role":"user","content":"q)") +
+                               std::to_string(i) + R"("}]})");
+        ASSERT_TRUE(res);
+        EXPECT_EQ(res->status, 502);
+        EXPECT_EQ(json::parse(res->body)["error"]["code"], "provider_error");
+    }
+    auto res = server.chat(R"({"model":"m","messages":[{"role":"user","content":"after"}]})");
+    ASSERT_TRUE(res);
+    EXPECT_EQ(json::parse(res->body)["error"]["code"], "provider_unavailable");
 }

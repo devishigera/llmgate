@@ -156,6 +156,13 @@ TEST(Config, OllamaRequiresUrl) {
     EXPECT_TRUE(contains(error_of(text), "providers[0].url is required for an ollama provider"));
 }
 
+TEST(Config, OllamaUrlMustBePlainHttp) {
+    for (const char* bad : {"localhost:11434", "https://localhost:11434", "ftp://x"}) {
+        const std::string text = std::string(R"({ "providers": [ { "name": "o", "type": "ollama", "url": ")") + bad + R"(" } ], "keys": [ { "team": "t", "key_sha256": ")" + kHash + R"(" } ] })";
+        EXPECT_TRUE(contains(error_of(text), "providers[0].url must start with \"http://\"")) << bad;
+    }
+}
+
 TEST(Config, DuplicateProviderNameRejected) {
     const std::string text = std::string(R"({ "providers": [ { "name": "m", "type": "mock" }, { "name": "m", "type": "mock" } ], "keys": [ { "team": "t", "key_sha256": ")") + kHash + R"(" } ] })";
     EXPECT_TRUE(contains(error_of(text), "duplicate provider name \"m\""));
