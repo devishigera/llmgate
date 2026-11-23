@@ -158,6 +158,9 @@ void parse_providers(const json& v, Config& cfg) {
         if (p.type == "ollama" && p.url.empty()) {
             fail(join(base, "url") + " is required for an ollama provider");
         }
+        if (p.type == "ollama" && p.url.rfind("http://", 0) != 0) {
+            fail(join(base, "url") + " must start with \"http://\" (https is not supported yet)");
+        }
         if (const json* x = find(obj, "timeout_ms")) {
             p.timeout_ms = static_cast<int>(int_in_range(*x, join(base, "timeout_ms"), 1, 600000));
         }
