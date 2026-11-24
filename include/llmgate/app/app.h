@@ -5,8 +5,10 @@
 #include <vector>
 
 #include "llmgate/auth/key_store.h"
+#include "llmgate/budget/budget_tracker.h"
 #include "llmgate/config/config.h"
 #include "llmgate/handlers/chat_handler.h"
+#include "llmgate/handlers/usage_handler.h"
 #include "llmgate/limiter/token_bucket.h"
 #include "llmgate/provider/provider.h"
 #include "llmgate/resilience/circuit_breaker.h"
@@ -16,17 +18,18 @@
 namespace llmgate {
 
 // Builds every part of the gateway from a Config and connects them:
-// key store, rate limiter, cache, provider, circuit breaker, chat handler and
-// the router. Both main() and the integration tests use it, so what the tests
-// exercise is exactly what runs in production.
+// key store, rate limiter, cache, provider, circuit breaker, budget tracker,
+// chat and usage handlers and the router. Both main() and the integration
+// tests use it, so what the tests exercise is exactly what runs in production.
 class App {
 public:
-    explicit App(const Config& config, Clock clock = real_clock());
+    explicit App(const Config& config, Clock clock = real_clock(),
+                 WallClock wall_clock = real_wall_clock());
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;
 
-    // Dispatches a request: GET /health and POST /v1/chat.
+    // Dispatches a request: GET /health, POST /v1/chat and GET /v1/usage.
     const Router& router() const { return router_; }
 
     // False if no usable provider or no keys were configured. /health still works.
@@ -43,7 +46,9 @@ private:
     ChatCache cache_;
     std::unique_ptr<Provider> provider_;
     CircuitBreaker breaker_;
+    BudgetTracker budget_;
     std::unique_ptr<ChatHandler> chat_;
+    std::unique_ptr<UsageHandler> usage_;
     Router router_;
 };
 
