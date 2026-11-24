@@ -43,13 +43,14 @@ std::unique_ptr<Provider> pick_provider(const Config& config, std::chrono::milli
 
 }  // namespace
 
-App::App(const Config& config, Clock clock)
+App::App(const Config& config, Clock clock, WallClock wall_clock)
     : keys_(config.keys),
       limiter_(clock),
       cache_(config.cache.capacity, std::chrono::seconds(config.cache.ttl_seconds), clock),
       breaker_(config.circuit_breaker.failure_threshold,
                std::chrono::seconds(config.circuit_breaker.cool_down_seconds),
-               /*half_open_trials=*/1, clock) {
+               /*half_open_trials=*/1, clock),
+      budget_(std::move(wall_clock)) {
     router_.add("GET", "/health", [](const HttpRequest&) {
         return json_response(200, health_json());
     });
@@ -61,12 +62,18 @@ App::App(const Config& config, Clock clock)
         notes_.push_back("no API keys configured: /v1/chat is disabled");
         return;
     }
+    usage_ = std::make_unique<UsageHandler>(keys_, budget_);
+    router_.add("GET", "/v1/usage", [this](const HttpRequest& request) {
+        return usage_->handle(request);
+    });
+
     if (!provider_) {
         notes_.push_back("no usable provider: /v1/chat is disabled");
         return;
     }
 
-    chat_ = std::make_unique<ChatHandler>(keys_, limiter_, cache_, *provider_, breaker_, timeout);
+    chat_ = std::make_unique<ChatHandler>(keys_, limiter_, cache_, *provider_, breaker_, timeout,
+                                          &budget_);
     router_.add("POST", "/v1/chat", [this](const HttpRequest& request) {
         return chat_->handle(request);
     });
