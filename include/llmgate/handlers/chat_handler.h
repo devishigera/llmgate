@@ -3,6 +3,7 @@
 #include <chrono>
 
 #include "llmgate/auth/key_store.h"
+#include "llmgate/budget/budget_tracker.h"
 #include "llmgate/cache/lru_cache.h"
 #include "llmgate/limiter/token_bucket.h"
 #include "llmgate/provider/provider.h"
@@ -18,6 +19,7 @@ using ChatCache = LruCache<std::string, ChatResponse>;
 //   1. authenticate the API key            -> 401 unauthorized
 //   2. parse and validate the JSON body    -> 400 bad_request
 //   3. rate limit this key                 -> 429 rate_limited (+ retry-after)
+//   3b. daily token budget (if enabled)    -> 429 budget_exceeded (+ retry-after)
 //   4. look in the cache                   -> 200 (cached: true)
 //   5. ask the circuit breaker             -> 502 provider_unavailable
 //   6. call the provider with a timeout    -> 200 (cached: false)
@@ -29,7 +31,8 @@ class ChatHandler {
 public:
     ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
                 Provider& provider, CircuitBreaker& breaker,
-                std::chrono::milliseconds provider_timeout);
+                std::chrono::milliseconds provider_timeout,
+                BudgetTracker* budget = nullptr);
 
     HttpResponse handle(const HttpRequest& request);
 
@@ -40,6 +43,7 @@ private:
     Provider& provider_;
     CircuitBreaker& breaker_;
     std::chrono::milliseconds provider_timeout_;
+    BudgetTracker* budget_;  // may be null: budgets are not enforced then
 };
 
 }  // namespace llmgate

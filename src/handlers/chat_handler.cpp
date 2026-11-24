@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <string>
@@ -91,6 +92,14 @@ std::string cache_key(const std::string& team, const ChatRequest& chat) {
                       std::to_string(chat.max_tokens));
 }
 
+// A cheap guess made before the call: about 4 characters per token, at least 1.
+// After the call we record the real number from the provider instead.
+long long estimate_request_tokens(const ChatRequest& chat) {
+    long long chars = 0;
+    for (const auto& m : chat.messages) chars += static_cast<long long>(m.content.size());
+    return std::max(1LL, chars / 4);
+}
+
 HttpResponse success(const ChatResponse& r, bool cached) {
     json body = {
         {"model", r.model},
@@ -109,13 +118,14 @@ HttpResponse success(const ChatResponse& r, bool cached) {
 
 ChatHandler::ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
                          Provider& provider, CircuitBreaker& breaker,
-                         std::chrono::milliseconds provider_timeout)
+                         std::chrono::milliseconds provider_timeout, BudgetTracker* budget)
     : keys_(keys),
       limiter_(limiter),
       cache_(cache),
       provider_(provider),
       breaker_(breaker),
-      provider_timeout_(provider_timeout) {}
+      provider_timeout_(provider_timeout),
+      budget_(budget) {}
 
 HttpResponse ChatHandler::handle(const HttpRequest& request) {
     // 1. Authenticate
@@ -145,7 +155,20 @@ HttpResponse ChatHandler::handle(const HttpRequest& request) {
         return r;
     }
 
-    // 4. Cache
+    // 3b. Daily token budget. Checked before the cache, so a key that has
+    //     used up its budget gets a clear 429 whatever it asks.
+    if (budget_ != nullptr) {
+        const long long estimate = estimate_request_tokens(parsed.chat);
+        if (!budget_->can_spend(key->key_sha256, estimate, key->daily_token_budget)) {
+            HttpResponse r = error_response(429, "budget_exceeded",
+                                            "the daily token budget is used up; it resets at "
+                                            "00:00 UTC");
+            r.headers["retry-after"] = std::to_string(budget_->seconds_until_reset());
+            return r;
+        }
+    }
+
+    // 4. Cache (a cache hit costs no tokens)
     const std::string ckey = cache_key(key->team, parsed.chat);
     if (auto hit = cache_.get(ckey)) return success(*hit, /*cached=*/true);
 
@@ -160,6 +183,7 @@ HttpResponse ChatHandler::handle(const HttpRequest& request) {
     try {
         ChatResponse response = provider_.chat(parsed.chat, provider_timeout_);
         breaker_.record_success();
+        if (budget_ != nullptr) budget_->record(key->key_sha256, response.usage.total());
         cache_.put(ckey, response);
         return success(response, /*cached=*/false);
     } catch (const ProviderError& e) {
