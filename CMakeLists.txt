@@ -65,6 +65,7 @@ add_executable(llmgate_tests
   tests/test_integration.cpp
   tests/test_ollama_provider.cpp
   tests/test_budget.cpp
+  tests/test_retry.cpp
 )
 target_compile_definitions(llmgate_tests PRIVATE LLMGATE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 target_link_libraries(llmgate_tests PRIVATE llmgate_core httplib::httplib GTest::gtest_main Threads::Threads)
