@@ -6,8 +6,7 @@
 #include "llmgate/budget/budget_tracker.h"
 #include "llmgate/cache/lru_cache.h"
 #include "llmgate/limiter/token_bucket.h"
-#include "llmgate/provider/provider.h"
-#include "llmgate/resilience/circuit_breaker.h"
+#include "llmgate/provider/router.h"
 #include "llmgate/server/http_types.h"
 
 namespace llmgate {
@@ -21,8 +20,9 @@ using ChatCache = LruCache<std::string, ChatResponse>;
 //   3. rate limit this key                 -> 429 rate_limited (+ retry-after)
 //   3b. daily token budget (if enabled)    -> 429 budget_exceeded (+ retry-after)
 //   4. look in the cache                   -> 200 (cached: true)
-//   5. ask the circuit breaker             -> 502 provider_unavailable
-//   6. call the provider with a timeout    -> 200 (cached: false)
+//   5. ask the provider router            -> 200 (cached: false)
+//        (circuit breaker, retry and failover happen inside the router)
+//                                             502 provider_unavailable (none could be tried)
 //                                             502 provider_error / 504 provider_timeout
 //
 // The handler only uses references, so whoever creates it (main, or a test)
@@ -30,9 +30,7 @@ using ChatCache = LruCache<std::string, ChatResponse>;
 class ChatHandler {
 public:
     ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
-                Provider& provider, CircuitBreaker& breaker,
-                std::chrono::milliseconds provider_timeout,
-                BudgetTracker* budget = nullptr);
+                ProviderRouter& router, BudgetTracker* budget = nullptr);
 
     HttpResponse handle(const HttpRequest& request);
 
@@ -40,9 +38,7 @@ private:
     const KeyStore& keys_;
     RateLimiter& limiter_;
     ChatCache& cache_;
-    Provider& provider_;
-    CircuitBreaker& breaker_;
-    std::chrono::milliseconds provider_timeout_;
+    ProviderRouter& router_;
     BudgetTracker* budget_;  // may be null: budgets are not enforced then
 };
 

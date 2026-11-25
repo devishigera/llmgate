@@ -277,8 +277,11 @@ TEST(Budget, FailedProviderCallDoesNotSpend) {
     opts.fail_next_n = 1;
     MockProvider provider(opts);
     CircuitBreaker breaker(5, std::chrono::milliseconds(1000), 1, real_clock());
-    ChatHandler handler(keys, limiter, cache, provider, breaker, std::chrono::milliseconds(1000),
-                        &budget);
+    RetryPolicy one_try;
+    one_try.max_attempts = 1;
+    ProviderRouter router(one_try, [](std::chrono::milliseconds) {}, real_clock());
+    router.add_ref(provider, breaker, 1, std::chrono::milliseconds(1000));
+    ChatHandler handler(keys, limiter, cache, router, &budget);
 
     EXPECT_EQ(handler.handle(chat_request("will fail")).status, 502);
     EXPECT_EQ(budget.used_today(sha256_hex(kRawKey)), 0);
