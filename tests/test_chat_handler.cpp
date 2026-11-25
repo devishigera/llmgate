@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "llmgate/handlers/chat_handler.h"
+#include "llmgate/provider/router.h"
 #include "llmgate/provider/mock.h"
 #include "llmgate/util/sha256.h"
 #include "test_helpers.h"
@@ -39,6 +40,12 @@ HttpRequest make_request(const std::string& body = kBody,
 
 std::string code_of(const HttpResponse& r) { return json::parse(r.body)["error"]["code"]; }
 
+RetryPolicy single_attempt() {
+    RetryPolicy p;
+    p.max_attempts = 1;
+    return p;
+}
+
 // A complete set of fake dependencies. Time only moves when a test moves it.
 struct Env {
     FakeClock clock;
@@ -47,6 +54,7 @@ struct Env {
     ChatCache cache{100, seconds(60), clock.fn()};
     MockProvider provider;
     CircuitBreaker breaker{3, milliseconds(1000), 1, clock.fn()};
+    ProviderRouter router;  // one provider, no retries: these tests are about the handler
     ChatHandler handler;
 
     explicit Env(double burst = 100, double per_second = 100, MockOptions opts = {},
@@ -54,7 +62,10 @@ struct Env {
         : keys({make_key("team-a", "lg_live_a", burst, per_second),
                 make_key("team-b", "lg_live_b", burst, per_second)}),
           provider(opts),
-          handler(keys, limiter, cache, provider, breaker, timeout) {}
+          router(single_attempt(), [](milliseconds) {}, clock.fn()),
+          handler(keys, limiter, cache, router) {
+        router.add_ref(provider, breaker, 1, timeout);
+    }
 
     HttpResponse send(const std::string& body = kBody, const std::string& auth = "Bearer lg_live_a") {
         return handler.handle(make_request(body, auth));
@@ -319,7 +330,9 @@ TEST(ChatHandler, UnexpectedProviderExceptionGives502WithoutLeakingDetails) {
     ChatCache cache(10, seconds(60), clock.fn());
     ExplodingProvider provider;
     CircuitBreaker breaker(3, milliseconds(1000), 1, clock.fn());
-    ChatHandler handler(keys, limiter, cache, provider, breaker, milliseconds(100));
+    ProviderRouter router(single_attempt(), [](milliseconds) {}, clock.fn());
+    router.add_ref(provider, breaker, 1, milliseconds(100));
+    ChatHandler handler(keys, limiter, cache, router);
 
     HttpResponse r = handler.handle(make_request());
     EXPECT_EQ(r.status, 502);

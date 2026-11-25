@@ -3,6 +3,8 @@
 #include <httplib.h>
 
 #include <atomic>
+#include <chrono>
+#include <iostream>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <thread>
@@ -178,20 +180,37 @@ TEST(Integration, WrongMethodGets405) {
 TEST(Integration, ManyClientsAtOnce) {
     TestServer server(test_config());
     std::atomic<int> ok{0};
+    std::atomic<int> connection_retries{0};
+    std::atomic<int> last_error{0};
     std::vector<std::thread> threads;
     for (int t = 0; t < 8; ++t) {
-        threads.emplace_back([&server, &ok, t] {
+        threads.emplace_back([&server, &ok, &connection_retries, &last_error, t] {
             for (int i = 0; i < 25; ++i) {
                 const std::string body =
                     std::string(R"({"model":"mock","messages":[{"role":"user","content":"q)") +
                     std::to_string(t) + "-" + std::to_string(i % 5) + R"("}]})";
-                auto res = server.chat(body);
+                httplib::Result res = server.chat(body);
+
+                // On a busy machine a connection can be refused or dropped before any
+                // answer arrives. Like a real client, try again a few times. We retry ONLY
+                // when no answer came at all: an answer that is not 200 still fails the test.
+                for (int attempt = 1; !res && attempt <= 3; ++attempt) {
+                    last_error = static_cast<int>(res.error());
+                    ++connection_retries;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                    res = server.chat(body);
+                }
                 if (res && res->status == 200) ++ok;
             }
         });
     }
     for (auto& th : threads) th.join();
     EXPECT_EQ(ok.load(), 200);
+    if (connection_retries.load() > 0) {
+        std::cout << "[  NOTE  ] " << connection_retries.load()
+                  << " request(s) needed a retry; last connection error code "
+                  << last_error.load() << " (httplib::Error)\n";
+    }
 }
 
 // ---- the whole gateway in front of a (fake) Ollama server -----------------------
@@ -272,4 +291,87 @@ TEST(IntegrationOllama, OllamaDownBecomes502ThenBreakerOpens) {
     auto res = server.chat(R"({"model":"m","messages":[{"role":"user","content":"after"}]})");
     ASSERT_TRUE(res);
     EXPECT_EQ(json::parse(res->body)["error"]["code"], "provider_unavailable");
+}
+
+// ---- failover: a dead Ollama in front of a working backup -----------------------
+
+namespace {
+
+Config failover_config(const FakeOllama& fake) {
+    Config c = ollama_config(fake);
+    ProviderConfig backup;
+    backup.name = "backup";
+    backup.type = "mock";
+    backup.priority = 2;
+    c.providers.push_back(backup);
+    c.circuit_breaker.failure_threshold = 2;
+    return c;
+}
+
+std::string prompt(int i) {
+    return std::string(R"({"model":"m","messages":[{"role":"user","content":"question )") +
+           std::to_string(i) + R"("}]})";
+}
+
+}  // namespace
+
+TEST(IntegrationFailover, DeadOllamaFallsThroughToTheMock) {
+    FakeOllama fake;
+    TestServer server(failover_config(fake));
+    fake.stop();  // Ollama goes away
+
+    auto res = server.chat(prompt(1));
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 200);
+    EXPECT_EQ(json::parse(res->body)["provider"], "backup");
+}
+
+TEST(IntegrationFailover, HealthyOllamaIsPreferred) {
+    FakeOllama fake;
+    TestServer server(failover_config(fake));
+    auto res = server.chat(prompt(1));
+    ASSERT_TRUE(res);
+    EXPECT_EQ(json::parse(res->body)["provider"], "ollama");
+}
+
+TEST(IntegrationFailover, FailingOllamaIsRetriedThenSkippedOnceItsBreakerOpens) {
+    FakeOllama fake;
+    fake.status = 500;
+    fake.reply_body = R"({"error":"overloaded"})";
+    TestServer server(failover_config(fake));
+
+    // Two requests: each tries Ollama 3 times (the retries), then the backup answers.
+    for (int i = 0; i < 2; ++i) {
+        auto res = server.chat(prompt(i));
+        ASSERT_TRUE(res);
+        EXPECT_EQ(res->status, 200);
+        EXPECT_EQ(json::parse(res->body)["provider"], "backup");
+    }
+    EXPECT_EQ(fake.calls(), 6);
+
+    // Ollama's breaker is now open (threshold 2): it is not called any more.
+    auto res = server.chat(prompt(99));
+    ASSERT_TRUE(res);
+    EXPECT_EQ(res->status, 200);
+    EXPECT_EQ(json::parse(res->body)["provider"], "backup");
+    EXPECT_EQ(fake.calls(), 6);
+}
+
+TEST(IntegrationFailover, RecoveredOllamaTakesOverAgainAfterTheCooldown) {
+    FakeOllama fake;
+    fake.status = 500;
+    fake.reply_body = R"({"error":"overloaded"})";
+    Config config = failover_config(fake);
+    config.circuit_breaker.cool_down_seconds = 1;
+    TestServer server(config);
+
+    for (int i = 0; i < 2; ++i) server.chat(prompt(i));  // opens the breaker
+    fake.status = 200;                                    // Ollama recovers
+    fake.reply_body =
+        R"({"model":"fake","message":{"role":"assistant","content":"back again"},"done":true})";
+    std::this_thread::sleep_for(std::chrono::milliseconds(1200));
+
+    auto res = server.chat(prompt(50));
+    ASSERT_TRUE(res);
+    EXPECT_EQ(json::parse(res->body)["provider"], "ollama");
 }

@@ -84,6 +84,22 @@ TEST(App, LowestPriorityNumberWins) {
     EXPECT_EQ(json::parse(app.router().dispatch(chat_request()).body)["provider"], "first");
 }
 
+TEST(App, ProvidersAreKeptInPriorityOrder) {
+    App app(config_with({provider("ollama", "ollama", 2), provider("fallback", "mock", 1)}));
+    auto status = app.providers().status();
+    ASSERT_EQ(status.size(), 2u);
+    EXPECT_EQ(status[0].name, "fallback");
+    EXPECT_EQ(status[1].name, "ollama");
+}
+
+TEST(App, UnknownProviderTypeIsSkippedButOthersStillWork) {
+    App app(config_with({provider("weird", "carrier-pigeon", 1), provider("mock", "mock", 2)}));
+    EXPECT_TRUE(app.chat_enabled());
+    EXPECT_TRUE(has_note(app, "unknown type"));
+    EXPECT_EQ(app.providers().size(), 1u);
+    EXPECT_EQ(json::parse(app.router().dispatch(chat_request()).body)["provider"], "mock");
+}
+
 TEST(App, NoProvidersDisablesChatButNotHealth) {
     App app(config_with({}));
     EXPECT_FALSE(app.chat_enabled());
