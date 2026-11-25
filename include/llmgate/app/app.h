@@ -10,21 +10,22 @@
 #include "llmgate/handlers/chat_handler.h"
 #include "llmgate/handlers/usage_handler.h"
 #include "llmgate/limiter/token_bucket.h"
-#include "llmgate/provider/provider.h"
-#include "llmgate/resilience/circuit_breaker.h"
+#include "llmgate/provider/router.h"
+#include "llmgate/resilience/retry.h"
 #include "llmgate/server/router.h"
 #include "llmgate/util/clock.h"
 
 namespace llmgate {
 
 // Builds every part of the gateway from a Config and connects them:
-// key store, rate limiter, cache, provider, circuit breaker, budget tracker,
-// chat and usage handlers and the router. Both main() and the integration
-// tests use it, so what the tests exercise is exactly what runs in production.
+// key store, rate limiter, cache, provider router (the providers, each with its
+// own circuit breaker), budget tracker, chat and usage handlers, and the HTTP
+// router. Both main() and the integration tests use it, so what the tests
+// exercise is exactly what runs in production.
 class App {
 public:
     explicit App(const Config& config, Clock clock = real_clock(),
-                 WallClock wall_clock = real_wall_clock());
+                 WallClock wall_clock = real_wall_clock(), Sleeper sleeper = real_sleeper());
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;
@@ -35,8 +36,12 @@ public:
     // False if no usable provider or no keys were configured. /health still works.
     bool chat_enabled() const { return chat_ != nullptr; }
 
+    // The providers in the order they are tried, with failover counters
+    // (used by the metrics endpoint in a later task).
+    const ProviderRouter& providers() const { return providers_; }
+
     // Human-readable messages about choices made at startup
-    // (for example "provider 'ollama' is not available yet, skipping").
+    // (for example "using provider 'ollama' (ollama), priority 1").
     const std::vector<std::string>& notes() const { return notes_; }
 
 private:
@@ -44,8 +49,7 @@ private:
     KeyStore keys_;
     RateLimiter limiter_;
     ChatCache cache_;
-    std::unique_ptr<Provider> provider_;
-    CircuitBreaker breaker_;
+    ProviderRouter providers_;
     BudgetTracker budget_;
     std::unique_ptr<ChatHandler> chat_;
     std::unique_ptr<UsageHandler> usage_;

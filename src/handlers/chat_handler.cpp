@@ -117,14 +117,11 @@ HttpResponse success(const ChatResponse& r, bool cached) {
 }  // namespace
 
 ChatHandler::ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
-                         Provider& provider, CircuitBreaker& breaker,
-                         std::chrono::milliseconds provider_timeout, BudgetTracker* budget)
+                         ProviderRouter& router, BudgetTracker* budget)
     : keys_(keys),
       limiter_(limiter),
       cache_(cache),
-      provider_(provider),
-      breaker_(breaker),
-      provider_timeout_(provider_timeout),
+      router_(router),
       budget_(budget) {}
 
 HttpResponse ChatHandler::handle(const HttpRequest& request) {
@@ -172,28 +169,22 @@ HttpResponse ChatHandler::handle(const HttpRequest& request) {
     const std::string ckey = cache_key(key->team, parsed.chat);
     if (auto hit = cache_.get(ckey)) return success(*hit, /*cached=*/true);
 
-    // 5. Circuit breaker
-    if (!breaker_.allow_request()) {
-        return error_response(502, "provider_unavailable",
-                              "the model provider is temporarily unavailable");
-    }
-
-    // 6. Provider. Every allow_request() must be followed by exactly one
-    //    record_success() or record_failure().
+    // 5. Providers. The router skips providers whose circuit breaker is open,
+    //    retries transient failures and fails over to the next provider.
     try {
-        ChatResponse response = provider_.chat(parsed.chat, provider_timeout_);
-        breaker_.record_success();
+        ChatResponse response = router_.chat(parsed.chat);
         if (budget_ != nullptr) budget_->record(key->key_sha256, response.usage.total());
         cache_.put(ckey, response);
         return success(response, /*cached=*/false);
+    } catch (const NoProviderAvailable&) {
+        return error_response(502, "provider_unavailable",
+                              "the model provider is temporarily unavailable");
     } catch (const ProviderError& e) {
-        breaker_.record_failure();
         if (e.timeout()) {
             return error_response(504, "provider_timeout", "the model provider took too long");
         }
         return error_response(502, "provider_error", "the model provider failed");
     } catch (const std::exception&) {
-        breaker_.record_failure();
         return error_response(502, "provider_error", "the model provider failed");
     }
 }
