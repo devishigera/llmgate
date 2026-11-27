@@ -6,6 +6,7 @@
 #include "llmgate/budget/budget_tracker.h"
 #include "llmgate/cache/lru_cache.h"
 #include "llmgate/limiter/token_bucket.h"
+#include "llmgate/metrics/gateway_metrics.h"
 #include "llmgate/provider/router.h"
 #include "llmgate/server/http_types.h"
 
@@ -30,16 +31,20 @@ using ChatCache = LruCache<std::string, ChatResponse>;
 class ChatHandler {
 public:
     ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
-                ProviderRouter& router, BudgetTracker* budget = nullptr);
+                ProviderRouter& router, BudgetTracker* budget = nullptr,
+                GatewayMetrics* metrics = nullptr);
 
     HttpResponse handle(const HttpRequest& request);
 
 private:
+    HttpResponse handle_impl(const HttpRequest& request);
+
     const KeyStore& keys_;
     RateLimiter& limiter_;
     ChatCache& cache_;
     ProviderRouter& router_;
-    BudgetTracker* budget_;  // may be null: budgets are not enforced then
+    BudgetTracker* budget_;    // may be null: budgets are not enforced then
+    GatewayMetrics* metrics_;  // may be null: nothing is measured then
 };
 
 }  // namespace llmgate

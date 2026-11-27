@@ -57,8 +57,19 @@ ChatResponse ProviderRouter::chat(const ChatRequest& request) {
     for (Entry& entry : entries_) {
         if (!entry.breaker->allow_request()) continue;  // breaker open: skip, no call
 
-        if (tried_any) ++failovers_;  // we are moving on from a provider that failed
+        if (tried_any) {  // we are moving on from a provider that failed
+            ++failovers_;
+            if (metrics_ != nullptr) metrics_->failover();
+        }
         tried_any = true;
+
+        const TimePoint started = clock_();
+        auto record_call = [&](bool ok) {
+            if (metrics_ != nullptr) {
+                metrics_->provider_call(entry.provider->name(),
+                                        GatewayMetrics::seconds_between(started, clock_()), ok);
+            }
+        };
 
         // allow_request() must be followed by exactly one record_success()
         // or record_failure(), whatever happens inside.
@@ -67,13 +78,16 @@ ChatResponse ProviderRouter::chat(const ChatRequest& request) {
                 retry_, [&] { return entry.provider->chat(request, entry.timeout); }, sleeper_,
                 rng, clock_);
             entry.breaker->record_success();
+            record_call(true);
             return response;
         } catch (const ProviderError& e) {
             entry.breaker->record_failure();
+            record_call(false);
             last_error = e;
         } catch (const std::exception&) {
             // Something that is not a ProviderError: a bug. Never show its text to clients.
             entry.breaker->record_failure();
+            record_call(false);
             last_error = ProviderError("unexpected provider failure", /*transient=*/false);
         }
     }

@@ -117,14 +117,25 @@ HttpResponse success(const ChatResponse& r, bool cached) {
 }  // namespace
 
 ChatHandler::ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
-                         ProviderRouter& router, BudgetTracker* budget)
+                         ProviderRouter& router, BudgetTracker* budget, GatewayMetrics* metrics)
     : keys_(keys),
       limiter_(limiter),
       cache_(cache),
       router_(router),
-      budget_(budget) {}
+      budget_(budget),
+      metrics_(metrics) {}
 
+// Measures how long the request took and counts it by status, whatever the outcome.
 HttpResponse ChatHandler::handle(const HttpRequest& request) {
+    if (metrics_ == nullptr) return handle_impl(request);
+    const TimePoint started = metrics_->now();
+    HttpResponse response = handle_impl(request);
+    metrics_->request_finished(response.status,
+                               GatewayMetrics::seconds_between(started, metrics_->now()));
+    return response;
+}
+
+HttpResponse ChatHandler::handle_impl(const HttpRequest& request) {
     // 1. Authenticate
     const auto token = parse_bearer(request.header("authorization"));
     const KeyConfig* key = token ? keys_.authenticate(*token) : nullptr;
@@ -145,6 +156,7 @@ HttpResponse ChatHandler::handle(const HttpRequest& request) {
     if (!limiter_.allow(key->key_sha256, key->rate_limit.burst, key->rate_limit.per_second)) {
         const double wait = limiter_.retry_after_seconds(key->key_sha256);
         const long long seconds = std::max(1LL, static_cast<long long>(std::ceil(wait)));
+        if (metrics_ != nullptr) metrics_->rate_limited();
         HttpResponse r = error_response(429, "rate_limited",
                                         "too many requests; retry in " +
                                             std::to_string(seconds) + " second(s)");
@@ -157,6 +169,7 @@ HttpResponse ChatHandler::handle(const HttpRequest& request) {
     if (budget_ != nullptr) {
         const long long estimate = estimate_request_tokens(parsed.chat);
         if (!budget_->can_spend(key->key_sha256, estimate, key->daily_token_budget)) {
+            if (metrics_ != nullptr) metrics_->budget_rejected();
             HttpResponse r = error_response(429, "budget_exceeded",
                                             "the daily token budget is used up; it resets at "
                                             "00:00 UTC");
@@ -167,13 +180,18 @@ HttpResponse ChatHandler::handle(const HttpRequest& request) {
 
     // 4. Cache (a cache hit costs no tokens)
     const std::string ckey = cache_key(key->team, parsed.chat);
-    if (auto hit = cache_.get(ckey)) return success(*hit, /*cached=*/true);
+    if (auto hit = cache_.get(ckey)) {
+        if (metrics_ != nullptr) metrics_->cache_hit();
+        return success(*hit, /*cached=*/true);
+    }
+    if (metrics_ != nullptr) metrics_->cache_miss();
 
     // 5. Providers. The router skips providers whose circuit breaker is open,
     //    retries transient failures and fails over to the next provider.
     try {
         ChatResponse response = router_.chat(parsed.chat);
         if (budget_ != nullptr) budget_->record(key->key_sha256, response.usage.total());
+        if (metrics_ != nullptr) metrics_->tokens(key->team, response.usage.total());
         cache_.put(ckey, response);
         return success(response, /*cached=*/false);
     } catch (const NoProviderAvailable&) {
