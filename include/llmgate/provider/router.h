@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "llmgate/metrics/gateway_metrics.h"
 #include "llmgate/provider/provider.h"
 #include "llmgate/resilience/circuit_breaker.h"
 #include "llmgate/resilience/retry.h"
@@ -61,6 +62,9 @@ public:
     void add_ref(Provider& provider, CircuitBreaker& breaker, int priority,
                  std::chrono::milliseconds timeout);
 
+    // Optional: count failovers and time provider calls. Call before serving.
+    void set_metrics(GatewayMetrics* metrics) { metrics_ = metrics; }
+
     ChatResponse chat(const ChatRequest& request);
 
     // How many times a request moved on to the next provider after a failure.
@@ -92,6 +96,7 @@ private:
     std::mutex seed_mutex_;
     std::mt19937_64 seed_source_;
     std::atomic<long long> failovers_{0};
+    GatewayMetrics* metrics_ = nullptr;
 };
 
 }  // namespace llmgate

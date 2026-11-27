@@ -10,6 +10,7 @@
 #include "llmgate/handlers/chat_handler.h"
 #include "llmgate/handlers/usage_handler.h"
 #include "llmgate/limiter/token_bucket.h"
+#include "llmgate/metrics/gateway_metrics.h"
 #include "llmgate/provider/router.h"
 #include "llmgate/resilience/retry.h"
 #include "llmgate/server/router.h"
@@ -30,7 +31,7 @@ public:
     App(const App&) = delete;
     App& operator=(const App&) = delete;
 
-    // Dispatches a request: GET /health, POST /v1/chat and GET /v1/usage.
+    // Dispatches a request: GET /health, GET /metrics, POST /v1/chat and GET /v1/usage.
     const Router& router() const { return router_; }
 
     // False if no usable provider or no keys were configured. /health still works.
@@ -39,6 +40,9 @@ public:
     // The providers in the order they are tried, with failover counters
     // (used by the metrics endpoint in a later task).
     const ProviderRouter& providers() const { return providers_; }
+
+    // Everything GET /metrics publishes.
+    const GatewayMetrics& metrics() const { return metrics_; }
 
     // Human-readable messages about choices made at startup
     // (for example "using provider 'ollama' (ollama), priority 1").
@@ -49,6 +53,7 @@ private:
     KeyStore keys_;
     RateLimiter limiter_;
     ChatCache cache_;
+    GatewayMetrics metrics_;
     ProviderRouter providers_;
     BudgetTracker budget_;
     std::unique_ptr<ChatHandler> chat_;

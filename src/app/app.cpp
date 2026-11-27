@@ -32,11 +32,27 @@ App::App(const Config& config, Clock clock, WallClock wall_clock, Sleeper sleepe
     : keys_(config.keys),
       limiter_(clock),
       cache_(config.cache.capacity, std::chrono::seconds(config.cache.ttl_seconds), clock),
+      metrics_(clock),
       providers_(RetryPolicy{}, std::move(sleeper), clock),
       budget_(std::move(wall_clock)) {
     router_.add("GET", "/health", [](const HttpRequest&) {
         return json_response(200, health_json());
     });
+
+    // /metrics needs no key: a Prometheus server scrapes it. Keep it on a private
+    // network (see docs). The breaker states are read at the moment of the scrape.
+    router_.add("GET", "/metrics", [this](const HttpRequest&) {
+        for (const auto& status : providers_.status()) {
+            metrics_.set_breaker_state(status.name, status.breaker);
+        }
+        HttpResponse response;
+        response.status = 200;
+        response.body = metrics_.render();
+        response.headers["content-type"] = "text/plain; version=0.0.4; charset=utf-8";
+        return response;
+    });
+
+    providers_.set_metrics(&metrics_);
 
     // One provider (with its own circuit breaker) per config entry. The router
     // tries them in priority order and fails over when one is down.
@@ -71,7 +87,8 @@ App::App(const Config& config, Clock clock, WallClock wall_clock, Sleeper sleepe
         return;
     }
 
-    chat_ = std::make_unique<ChatHandler>(keys_, limiter_, cache_, providers_, &budget_);
+    chat_ = std::make_unique<ChatHandler>(keys_, limiter_, cache_, providers_, &budget_,
+                                          &metrics_);
     router_.add("POST", "/v1/chat", [this](const HttpRequest& request) {
         return chat_->handle(request);
     });
