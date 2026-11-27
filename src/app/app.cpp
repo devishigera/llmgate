@@ -28,7 +28,8 @@ std::unique_ptr<Provider> make_provider(const ProviderConfig& p) {
 
 }  // namespace
 
-App::App(const Config& config, Clock clock, WallClock wall_clock, Sleeper sleeper)
+App::App(const Config& config, Clock clock, WallClock wall_clock, Sleeper sleeper,
+         Logger* logger)
     : keys_(config.keys),
       limiter_(clock),
       cache_(config.cache.capacity, std::chrono::seconds(config.cache.ttl_seconds), clock),
@@ -53,6 +54,7 @@ App::App(const Config& config, Clock clock, WallClock wall_clock, Sleeper sleepe
     });
 
     providers_.set_metrics(&metrics_);
+    providers_.set_logger(logger);
 
     // One provider (with its own circuit breaker) per config entry. The router
     // tries them in priority order and fails over when one is down.
@@ -88,7 +90,7 @@ App::App(const Config& config, Clock clock, WallClock wall_clock, Sleeper sleepe
     }
 
     chat_ = std::make_unique<ChatHandler>(keys_, limiter_, cache_, providers_, &budget_,
-                                          &metrics_);
+                                          &metrics_, logger);
     router_.add("POST", "/v1/chat", [this](const HttpRequest& request) {
         return chat_->handle(request);
     });

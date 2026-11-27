@@ -83,11 +83,20 @@ ChatResponse ProviderRouter::chat(const ChatRequest& request) {
         } catch (const ProviderError& e) {
             entry.breaker->record_failure();
             record_call(false);
+            // The message can contain text from the provider, so only the kind of failure is logged.
+            if (logger_ != nullptr) {
+                logger_->warn("provider_failed", {{"provider", entry.provider->name()},
+                                                  {"transient", e.transient()},
+                                                  {"timeout", e.timeout()}});
+            }
             last_error = e;
         } catch (const std::exception&) {
             // Something that is not a ProviderError: a bug. Never show its text to clients.
             entry.breaker->record_failure();
             record_call(false);
+            if (logger_ != nullptr) {
+                logger_->error("provider_crashed", {{"provider", entry.provider->name()}});
+            }
             last_error = ProviderError("unexpected provider failure", /*transient=*/false);
         }
     }

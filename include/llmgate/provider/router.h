@@ -14,6 +14,7 @@
 #include "llmgate/resilience/circuit_breaker.h"
 #include "llmgate/resilience/retry.h"
 #include "llmgate/util/clock.h"
+#include "llmgate/util/logger.h"
 
 namespace llmgate {
 
@@ -65,6 +66,9 @@ public:
     // Optional: count failovers and time provider calls. Call before serving.
     void set_metrics(GatewayMetrics* metrics) { metrics_ = metrics; }
 
+    // Optional: log each failed provider call (provider name and kind of failure only).
+    void set_logger(Logger* logger) { logger_ = logger; }
+
     ChatResponse chat(const ChatRequest& request);
 
     // How many times a request moved on to the next provider after a failure.
@@ -97,6 +101,7 @@ private:
     std::mt19937_64 seed_source_;
     std::atomic<long long> failovers_{0};
     GatewayMetrics* metrics_ = nullptr;
+    Logger* logger_ = nullptr;
 };
 
 }  // namespace llmgate

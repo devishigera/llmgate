@@ -7,6 +7,7 @@
 #include "llmgate/app/app.h"
 #include "llmgate/config/config.h"
 #include "llmgate/server/httplib_adapter.h"
+#include "llmgate/util/logger.h"
 
 namespace {
 
@@ -14,7 +15,9 @@ void print_usage(const char* program) {
     std::cerr << "Usage: " << program << " [--config <path>]\n"
               << "  --config <path>   load settings from a JSON file\n"
               << "  --help            show this message\n"
-              << "Environment: LLMGATE_PORT overrides the listen port.\n";
+              << "Environment: LLMGATE_PORT overrides the listen port.\n"
+              << "             LLMGATE_LOG_LEVEL is debug, info (default), warn, error or off.\n"
+              << "Request logs are JSON lines on stdout; startup messages go to stderr.\n";
 }
 
 }  // namespace
@@ -66,17 +69,30 @@ int main(int argc, char** argv) {
         config.listen_port = port;
     }
 
-    std::cout << llmgate::describe(config);
+    // 4. Log level (LLMGATE_LOG_LEVEL). Request logs are JSON lines on stdout.
+    llmgate::LogLevel log_level = llmgate::LogLevel::Info;
+    if (const char* env_level = std::getenv("LLMGATE_LOG_LEVEL")) {
+        if (!llmgate::parse_log_level(env_level, log_level)) {
+            std::cerr << "error: LLMGATE_LOG_LEVEL must be debug, info, warn, error or off\n";
+            return 2;
+        }
+    }
+    llmgate::Logger logger(std::cout, log_level);
 
-    // 4. Build the gateway and connect it to the HTTP server
-    llmgate::App app(config);
-    for (const auto& note : app.notes()) std::cout << "startup: " << note << "\n";
+    // Human-readable startup messages go to stderr, so stdout holds only JSON lines.
+    std::cerr << llmgate::describe(config);
+
+    // 5. Build the gateway and connect it to the HTTP server
+    llmgate::App app(config, llmgate::real_clock(), llmgate::real_wall_clock(),
+                     llmgate::real_sleeper(), &logger);
+    for (const auto& note : app.notes()) std::cerr << "startup: " << note << "\n";
 
     httplib::Server server;
     llmgate::install_router(server, app.router(), config.max_body_bytes);
 
-    std::cout << "LLMGate listening on " << config.listen_host << ":"
-              << config.listen_port << std::endl;
+    std::cerr << "LLMGate listening on " << config.listen_host << ":" << config.listen_port
+              << std::endl;
+    logger.info("listening", {{"host", config.listen_host}, {"port", config.listen_port}});
     if (!server.listen(config.listen_host, config.listen_port)) {
         std::cerr << "Failed to listen on " << config.listen_host << ":"
                   << config.listen_port << std::endl;

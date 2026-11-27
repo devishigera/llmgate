@@ -9,6 +9,7 @@
 #include "llmgate/metrics/gateway_metrics.h"
 #include "llmgate/provider/router.h"
 #include "llmgate/server/http_types.h"
+#include "llmgate/util/logger.h"
 
 namespace llmgate {
 
@@ -32,12 +33,21 @@ class ChatHandler {
 public:
     ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
                 ProviderRouter& router, BudgetTracker* budget = nullptr,
-                GatewayMetrics* metrics = nullptr);
+                GatewayMetrics* metrics = nullptr, Logger* logger = nullptr);
 
+    // Gives every response an x-request-id header and (if there is a logger)
+    // writes one log line per request.
     HttpResponse handle(const HttpRequest& request);
 
 private:
-    HttpResponse handle_impl(const HttpRequest& request);
+    // What the pipeline learned about a request, for the log line.
+    struct RequestInfo {
+        std::string team;      // empty until the key is accepted
+        bool cache_hit = false;
+        std::string provider;  // who produced the answer (empty if nobody did)
+    };
+
+    HttpResponse handle_impl(const HttpRequest& request, RequestInfo& info);
 
     const KeyStore& keys_;
     RateLimiter& limiter_;
@@ -45,6 +55,7 @@ private:
     ProviderRouter& router_;
     BudgetTracker* budget_;    // may be null: budgets are not enforced then
     GatewayMetrics* metrics_;  // may be null: nothing is measured then
+    Logger* logger_;           // may be null: nothing is logged then
 };
 
 }  // namespace llmgate

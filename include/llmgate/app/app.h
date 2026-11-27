@@ -15,6 +15,7 @@
 #include "llmgate/resilience/retry.h"
 #include "llmgate/server/router.h"
 #include "llmgate/util/clock.h"
+#include "llmgate/util/logger.h"
 
 namespace llmgate {
 
@@ -26,7 +27,8 @@ namespace llmgate {
 class App {
 public:
     explicit App(const Config& config, Clock clock = real_clock(),
-                 WallClock wall_clock = real_wall_clock(), Sleeper sleeper = real_sleeper());
+                 WallClock wall_clock = real_wall_clock(), Sleeper sleeper = real_sleeper(),
+                 Logger* logger = nullptr);
 
     App(const App&) = delete;
     App& operator=(const App&) = delete;
