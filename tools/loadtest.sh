@@ -32,7 +32,7 @@ fi
 mkdir -p bench-results
 STAMP="$(date +%Y%m%d-%H%M%S)"
 
-LLMGATE_PORT="$PORT" "$BIN" --config "$CONFIG" > "bench-results/$STAMP-server.log" 2>&1 &
+LLMGATE_LOG_LEVEL=off LLMGATE_PORT="$PORT" "$BIN" --config "$CONFIG" > "bench-results/$STAMP-server.log" 2>&1 &
 SERVER_PID=$!
 trap 'kill "$SERVER_PID" 2>/dev/null; wait "$SERVER_PID" 2>/dev/null' EXIT
 
