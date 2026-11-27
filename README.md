@@ -741,12 +741,12 @@ Rule for every phase: **finish with something that runs, is tested, and is pushe
 **Done when:** `curl` with a valid key returns a mock answer; invalid key gets 401; hammering gets 429; repeated prompt is served from cache. The unit tests pass on both macOS and Ubuntu.
 
 ### Phase 2: Real Provider + Budgets (Week 3)
-- [ ] `OllamaProvider` over HTTP.
-- [ ] Token usage accounting and daily budgets.
-- [ ] Retries with backoff + jitter; per-call timeouts.
-- [ ] Failover Ollama -> mock (or second provider).
-- [ ] `/metrics` with counters and a latency histogram.
-- [ ] Structured JSON logging with request IDs.
+- [x] `OllamaProvider` over HTTP.
+- [x] Token usage accounting and daily budgets.
+- [x] Retries with backoff + jitter; per-call timeouts.
+- [x] Failover Ollama -> mock (or second provider).
+- [x] `/metrics` with counters and a latency histogram.
+- [x] Structured JSON logging with request IDs.
 
 ### Phase 3: Production-Grade Server (Week 4)
 **Environment:** `epoll` is Linux-only, so the epoll server, its benchmarks and the WAL crash-recovery test are compiled and run in Ubuntu. You can edit on macOS, but the macOS build skips this code (see 7.1).
