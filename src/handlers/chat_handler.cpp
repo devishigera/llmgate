@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <exception>
 #include <string>
@@ -117,25 +118,54 @@ HttpResponse success(const ChatResponse& r, bool cached) {
 }  // namespace
 
 ChatHandler::ChatHandler(const KeyStore& keys, RateLimiter& limiter, ChatCache& cache,
-                         ProviderRouter& router, BudgetTracker* budget, GatewayMetrics* metrics)
+                         ProviderRouter& router, BudgetTracker* budget, GatewayMetrics* metrics,
+                         Logger* logger)
     : keys_(keys),
       limiter_(limiter),
       cache_(cache),
       router_(router),
       budget_(budget),
-      metrics_(metrics) {}
+      metrics_(metrics),
+      logger_(logger) {}
 
-// Measures how long the request took and counts it by status, whatever the outcome.
+// Wraps the pipeline: request id, timing, metrics and the log line, whatever the outcome.
 HttpResponse ChatHandler::handle(const HttpRequest& request) {
-    if (metrics_ == nullptr) return handle_impl(request);
-    const TimePoint started = metrics_->now();
-    HttpResponse response = handle_impl(request);
-    metrics_->request_finished(response.status,
-                               GatewayMetrics::seconds_between(started, metrics_->now()));
+    const std::string request_id = generate_request_id();
+    const auto started = std::chrono::steady_clock::now();
+    const TimePoint metrics_started = metrics_ != nullptr ? metrics_->now() : TimePoint{};
+
+    RequestInfo info;
+    HttpResponse response = handle_impl(request, info);
+    response.headers["x-request-id"] = request_id;
+
+    if (metrics_ != nullptr) {
+        metrics_->request_finished(
+            response.status, GatewayMetrics::seconds_between(metrics_started, metrics_->now()));
+    }
+
+    if (logger_ != nullptr) {
+        const double ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+                .count();
+        LogLevel level = LogLevel::Info;
+        if (response.status >= 500) level = LogLevel::Error;
+        else if (response.status >= 400) level = LogLevel::Warn;
+
+        // Only ids, the team name, numbers and the provider name. Never the key, never the prompt.
+        LogFields fields = LogFields::object();
+        fields["request_id"] = request_id;
+        fields["team"] = info.team.empty() ? LogFields(nullptr) : LogFields(info.team);
+        fields["route"] = "/v1/chat";
+        fields["status"] = response.status;
+        fields["latency_ms"] = std::round(ms * 1000.0) / 1000.0;
+        fields["cache_hit"] = info.cache_hit;
+        fields["provider"] = info.provider.empty() ? LogFields(nullptr) : LogFields(info.provider);
+        logger_->log(level, "request", fields);
+    }
     return response;
 }
 
-HttpResponse ChatHandler::handle_impl(const HttpRequest& request) {
+HttpResponse ChatHandler::handle_impl(const HttpRequest& request, RequestInfo& info) {
     // 1. Authenticate
     const auto token = parse_bearer(request.header("authorization"));
     const KeyConfig* key = token ? keys_.authenticate(*token) : nullptr;
@@ -146,6 +176,8 @@ HttpResponse ChatHandler::handle_impl(const HttpRequest& request) {
         r.headers["www-authenticate"] = "Bearer";
         return r;
     }
+
+    info.team = key->team;
 
     // 2. Validate the body
     ParsedRequest parsed;
@@ -181,6 +213,8 @@ HttpResponse ChatHandler::handle_impl(const HttpRequest& request) {
     // 4. Cache (a cache hit costs no tokens)
     const std::string ckey = cache_key(key->team, parsed.chat);
     if (auto hit = cache_.get(ckey)) {
+        info.cache_hit = true;
+        info.provider = hit->provider;
         if (metrics_ != nullptr) metrics_->cache_hit();
         return success(*hit, /*cached=*/true);
     }
@@ -193,6 +227,7 @@ HttpResponse ChatHandler::handle_impl(const HttpRequest& request) {
         if (budget_ != nullptr) budget_->record(key->key_sha256, response.usage.total());
         if (metrics_ != nullptr) metrics_->tokens(key->team, response.usage.total());
         cache_.put(ckey, response);
+        info.provider = response.provider;
         return success(response, /*cached=*/false);
     } catch (const NoProviderAvailable&) {
         return error_response(502, "provider_unavailable",
